@@ -39,6 +39,10 @@ const int pin2 = 3;
 const int pin3 = 4;
 const int pin4 = 5;
 
+// varuable string read maximum data from power supply
+String getValueMaxVoltage = "";
+String getValueMaxCurrent = "";
+
 // creare variable to read data from power supply
 int powerSupplyMaxCurrent = 0;
 int powerSupplyMaxVoltage = 0;
@@ -53,16 +57,16 @@ twai_message_t id_receive_109; twai_message_t id_transmit_109;
 twai_message_t id_receive_108; twai_message_t id_transmit_108;
 
 // id 100
-uint8_t maximum_battery_voltage; uint8_t maximum_battery_voltage_msb; uint8_t maximum_battery_voltage_lsb;
+uint16_t maximum_battery_voltage = 0; uint8_t maximum_battery_voltage_msb; uint8_t maximum_battery_voltage_lsb;
 uint8_t constant_of_charging_rate_indication;
 
 // id 101
-uint8_t rated_capacity_of_battery; uint8_t rated_capacity_of_battery_msb; uint8_t rated_capacity_of_battery_lsb;
+uint16_t rated_capacity_of_battery = 0; uint8_t rated_capacity_of_battery_msb; uint8_t rated_capacity_of_battery_lsb;
 uint8_t minutes; uint8_t seconds;
 
 // id 102
 uint8_t supportedAppProtocol_Req;   // control protocol number
-uint8_t target_battery_voltage; uint8_t target_battery_voltage_msb; uint8_t target_battery_voltage_lsb;
+uint16_t target_battery_voltage; uint8_t target_battery_voltage_msb; uint8_t target_battery_voltage_lsb;
 uint8_t charging_current_request;
 uint8_t charging_rate;
 uint8_t vehicle_charging_enable = 0;
@@ -75,6 +79,8 @@ uint8_t battery_undervoltage = 0;
 uint8_t battery_current_deviation_error = 0;
 uint8_t high_battery_temperature = 0;
 uint8_t battery_voltage_deviation_error = 0;
+uint8_t states_value_byte_4;
+uint8_t states_value_byte_5;
 
 // id 108
 uint8_t available_output_voltage; uint8_t available_output_voltage_msb; uint8_t available_output_voltage_lsb;
@@ -179,8 +185,9 @@ void identification_chargecontroller_chargeroffboard(void * argument){
     if(current_count_millis5 - prev_count_millis5 >= 1000){  
       // create id message for handshaking process
       if(!isConnected){
-      Status_for_id_109[0] = 50;
-      message_transfer(&id_transmit_109, 0x109, 8, Status_for_id_109);
+        Status_for_id_109[0] = 50;
+        message_transfer(&id_transmit_109, 0x109, 8, Status_for_id_109);
+        Serial.println("Not Connected...");
       }
 
       // check for response
@@ -232,9 +239,9 @@ void exchange_data_communication_initialization_transmit(void * argument){
           powerSupplyMaxVoltage = 0;
 
           // get data from power supply
-          String getValueMaxVoltage = sendCommand("SOUR:VOLT:MAX?");
+          getValueMaxVoltage = sendCommand("SOUR:VOLT:MAX?");
           vTaskDelay(500);
-          String getValueMaxCurrent = sendCommand("SOUR:CURR:MAX?");
+          getValueMaxCurrent = sendCommand("SOUR:CURR:MAX?");
 
           // convert value from string to integer for each variable
           powerSupplyMaxVoltage = getValueMaxVoltage.toInt();
@@ -252,8 +259,8 @@ void exchange_data_communication_initialization_transmit(void * argument){
           Serial.print("Voltage Int Convert : ");
           Serial.println(voltageInt);
 
-          Status_for_id_108[1] = (uint8_t)(voltageInt >> 8);   // High byte
-          Status_for_id_108[2] = (uint8_t)(voltageInt & 0xFF); // Low byte
+          Status_for_id_108[2] = (uint8_t)((voltageInt >> 8) & 0xFF);   // High byte
+          Status_for_id_108[1] = (uint8_t)(voltageInt & 0xFF); // Low byte
 
           // send data
           message_transfer(&id_transmit_108, 0x108, 8, Status_for_id_108);
@@ -330,6 +337,8 @@ void exchange_data_communication_initialization_transmit(void * argument){
 
               // construct decimal value
               maximum_battery_voltage = (maximum_battery_voltage_msb << 8) | maximum_battery_voltage_lsb;
+              Serial.print("Maximum Battery Voltage Reconstructed : ");
+              Serial.println(maximum_battery_voltage);
             }
           }
 
@@ -350,10 +359,16 @@ void exchange_data_communication_initialization_transmit(void * argument){
 
               // construct capacity for battery
               rated_capacity_of_battery = (rated_capacity_of_battery_msb << 8) | rated_capacity_of_battery_lsb;
+              Serial.print("Constructed Rated Capacity Of Battery : ");
+              Serial.println(rated_capacity_of_battery);
 
               // get time charging
               minutes = id_receive_101.data[2];
               seconds = id_receive_101.data[1];
+              Serial.print("Time Value : ");
+              Serial.print(minutes);
+              Serial.print(":");
+              Serial.println(seconds);
             }
           }
 
@@ -374,10 +389,49 @@ void exchange_data_communication_initialization_transmit(void * argument){
               target_battery_voltage_lsb = id_receive_102.data[1];
 
               // construct target battery voltage
-              maximum_battery_voltage = (target_battery_voltage_msb << 8) | target_battery_voltage_lsb;
+              target_battery_voltage = (target_battery_voltage_msb << 8) | target_battery_voltage_lsb;
+              Serial.print("Constructed Target Battery Voltage : ");
+              Serial.println(target_battery_voltage);
+              Serial.print("Current Request : ");
+              Serial.println(charging_current_request);
+
+              // set voltage and current of power supply
+
+              // read data states from byte 4
+              states_value_byte_4 = id_receive_102.data[4];
+
+              // create array to hold value from byte 4
+              uint8_t states_byte_4[5];
+              for (int i = 4; i >= 0; i--) {
+                  states_byte_4[i] = states_value_byte_4 & 0x01;
+                  states_value_byte_4 >>= 1;
+              }
+
+              // get value from each array into vehicle condition
+              vehicle_charging_enable = states_byte_4[0];
+              vehicle_shift_lever_position = states_byte_4[1];
+              charging_system_fault = states_byte_4[2];
+              vehicle_status = states_byte_4[3];
+              normal_stop_request_before_charging = states_byte_4[4];
+
+              // read data states from byte 5
+              states_value_byte_5 = id_receive_102.data[5];
+
+              // create array to hold value from byte 5
+              uint8_t states_byte_5[5];
+              for (int i = 4; i >= 0; i--) {
+                  states_byte_5[i] = states_value_byte_4 & 0x01;
+                  states_value_byte_4 >>= 1;
+              }
+
+              // get value from each array into battery condition
+              battery_overvoltage = states_byte_5[0];
+              battery_undervoltage = states_byte_5[1];
+              battery_current_deviation_error = states_byte_5[2];
+              high_battery_temperature = states_byte_5[3];
+              battery_voltage_deviation_error = states_byte_5[4];
             }
           }
-
         }
       }
     }
@@ -431,8 +485,18 @@ void setup() {
     String voltage = sendCommand("MEAS:VOLT?");
     delay(500); // Small delay to ensure proper response reception
 
+    // condition zero
+    if(voltage == ""){
+      voltage = "0.0";
+    }
+
     String current = sendCommand("MEAS:CURR?");
     delay(500); // Small delay to ensure proper response reception
+
+    // condition zero
+    if(current == ""){
+      current = "0.0";
+    }
 
     String check = sendCommand("OUTP?");
 
@@ -468,16 +532,16 @@ void setup() {
       voltage = sendCommand("SOUR:VOLT:MAX?");
       delay(500); // Small delay to ensure proper response reception
 
-      current = sendCommand("SOUR:VOLT:MAX?");
+      current = sendCommand("SOUR:CURR:MAX?");
       delay(500); // Small delay to ensure proper response reception
 
       //String temperature = sendCommand("MEAS:TEMP?")
 
       power = String(voltage.toInt() * current.toInt());
     } else {
-      voltage = String(powerSupplyMaxVoltage);
-      current = String(powerSupplyMaxCurrent);
-      power = String(powerSupplyMaxVoltage * powerSupplyMaxCurrent);
+      voltage = getValueMaxVoltage;
+      current = getValueMaxCurrent;
+      power = String((voltage.toInt() * current.toInt()) / 1000);
     }
 
     // Create JSON response
@@ -486,6 +550,19 @@ void setup() {
     jsonDoc["available_current"] = current;
     jsonDoc["available_power"] = power;
     jsonDoc["temperature"] = "28";
+    String jsonResponse;
+    serializeJson(jsonDoc, jsonResponse);
+
+    request->send(200, "text/plain", jsonResponse);
+  });
+
+  // set endpoint request for getting battery info data
+  server.on("/info-batt", HTTP_GET, [](AsyncWebServerRequest *request) {
+    // Create JSON response
+    StaticJsonDocument<200> jsonDoc;
+    jsonDoc["maximum_battery_voltage"] = maximum_battery_voltage;
+    jsonDoc["rated_battery_capacity"] = rated_capacity_of_battery;
+
     String jsonResponse;
     serializeJson(jsonDoc, jsonResponse);
 
