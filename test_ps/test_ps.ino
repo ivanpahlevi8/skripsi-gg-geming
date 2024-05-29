@@ -43,6 +43,10 @@ const int pin4 = 5;
 String getValueMaxVoltage = "";
 String getValueMaxCurrent = "";
 
+// variable as memory to save state of previos current and voltage
+int prevVoltageValue = 0;
+int prevCurrentValue = 0;
+
 // creare variable to read data from power supply
 int powerSupplyMaxCurrent = 0;
 int powerSupplyMaxVoltage = 0;
@@ -72,7 +76,7 @@ uint8_t charging_rate;
 uint8_t vehicle_charging_enable = 0;
 uint8_t vehicle_shift_lever_position = 0;
 uint8_t charging_system_fault = 0;
-uint8_t vehicle_status = 1;
+uint8_t vehicle_status = 0;
 uint8_t normal_stop_request_before_charging = 0;
 uint8_t battery_overvoltage = 0;
 uint8_t battery_undervoltage = 0;
@@ -83,7 +87,7 @@ uint8_t states_value_byte_4;
 uint8_t states_value_byte_5;
 
 // id 108
-uint8_t available_output_voltage; uint8_t available_output_voltage_msb; uint8_t available_output_voltage_lsb;
+uint16_t available_output_voltage; uint8_t available_output_voltage_msb; uint8_t available_output_voltage_lsb;
 uint8_t available_output_current;
 uint8_t charging_power;
 uint8_t threshold_voltage;
@@ -182,7 +186,7 @@ void identification_chargecontroller_chargeroffboard(void * argument){
   for(;;){
     long int current_count_millis5 = millis();
       
-    if(current_count_millis5 - prev_count_millis5 >= 1000){  
+    if(current_count_millis5 - prev_count_millis5 >= 1000){ 
       // create id message for handshaking process
       if(!isConnected){
         Status_for_id_109[0] = 50;
@@ -267,6 +271,28 @@ void exchange_data_communication_initialization_transmit(void * argument){
 
           // give some delay
           vTaskDelay(200);
+
+          /**
+            PREPARED VALUE FOR ID NUMBER 109
+          */
+          // read output voltage
+          String responseVoltage = sendCommand("MEAS:VOLT?");
+          vTaskDelay(500);
+          int responseNumberVolt = responseVoltage.toInt();
+          uint16_t voltageOutpInt = (uint16_t)(responseNumberVolt);
+
+          // assign to msb and lsb for output voltage
+          Status_for_id_109[2] = (uint8_t)((voltageOutpInt >> 8) & 0xFF);   // High byte
+          Status_for_id_109[1] = (uint8_t)(voltageOutpInt & 0xFF); // Low byte
+
+          // read output current
+          String responseCurrent = sendCommand("MEAS:CURR?");
+          vTaskDelay(500);
+          int responseNumberCurr = responseCurrent.toInt();
+          uint16_t currentOutpInt = (uint16_t)(responseNumberCurr);
+
+          // assign to byte 3
+          Status_for_id_109[3] = currentOutpInt & 0xFF;
 
           // read charging station condition
           // condition are created for mocking
@@ -396,6 +422,16 @@ void exchange_data_communication_initialization_transmit(void * argument){
               Serial.println(charging_current_request);
 
               // set voltage and current of power supply
+              // String scpi_command_volt = "VOLT " + String(target_battery_voltage);
+              // sendCommand(scpi_command_volt);
+
+              // if(charging_current_request < 10){
+              //   String scpi_command_curr = "CURR " + String(charging_current_request);
+              //   sendCommand(scpi_command_curr);
+              // }
+
+              // prevVoltageValue = target_battery_voltage;
+              // prevCurrentValue = charging_current_request;
 
               // read data states from byte 4
               states_value_byte_4 = id_receive_102.data[4];
@@ -436,6 +472,13 @@ void exchange_data_communication_initialization_transmit(void * argument){
       }
     }
     vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+ }
+
+ // create function to handle end request from EV to stop charging control
+ void exchange_data_communication_initialization_receive(void * argument){
+  while(1){
+    
   }
  }
 
@@ -562,6 +605,39 @@ void setup() {
     StaticJsonDocument<200> jsonDoc;
     jsonDoc["maximum_battery_voltage"] = maximum_battery_voltage;
     jsonDoc["rated_battery_capacity"] = rated_capacity_of_battery;
+
+    String jsonResponse;
+    serializeJson(jsonDoc, jsonResponse);
+
+    request->send(200, "text/plain", jsonResponse);
+  });
+
+  // endpoint for charging info
+  server.on("/info-charge", HTTP_GET, [](AsyncWebServerRequest *request) {
+    bool vehicle_charging_enable_state = vehicle_charging_enable == 1 ? true : false;
+    bool vehicle_shift_lever_position_state = vehicle_shift_lever_position == 1 ? true : false;
+    bool charging_system_fault_state = charging_system_fault == 1 ? true : false;
+    bool vehicle_status_state = vehicle_status == 1 ? true : false;
+    bool normal_stop_request_before_charging_state = normal_stop_request_before_charging == 1 ? true : false;
+    
+    bool battery_overvoltage_state = battery_overvoltage == 1 ? true : false;
+    bool battery_undervoltage_state = battery_undervoltage == 1 ? true : false;
+    bool battery_current_deviation_error_state = battery_current_deviation_error == 1 ? true : false;
+    bool high_battery_temperature_state = high_battery_temperature == 1 ? true : false;
+    bool battery_voltage_deviation_error_state = battery_voltage_deviation_error == 1 ? true : false;
+
+    // Create JSON response
+    StaticJsonDocument<200> jsonDoc;
+    jsonDoc["vehicle_charging_enable_state"] = vehicle_charging_enable_state;
+    jsonDoc["vehicle_shift_lever_position_state"] = vehicle_shift_lever_position_state;
+    jsonDoc["charging_system_fault_state"] = charging_system_fault_state;
+    jsonDoc["vehicle_status_state"] = vehicle_status_state;
+    jsonDoc["normal_stop_request_before_charging_state"] = normal_stop_request_before_charging_state;
+    jsonDoc["battery_overvoltage_state"] = battery_overvoltage_state;
+    jsonDoc["battery_undervoltage_state"] = battery_undervoltage_state;
+    jsonDoc["battery_current_deviation_error_state"] = battery_current_deviation_error_state;
+    jsonDoc["high_battery_temperature_state"] = high_battery_temperature_state;
+    jsonDoc["battery_voltage_deviation_error_state"] = battery_voltage_deviation_error_state;
 
     String jsonResponse;
     serializeJson(jsonDoc, jsonResponse);
